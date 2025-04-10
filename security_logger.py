@@ -156,6 +156,19 @@ class SecurityLogger:
             ]
         }
         
+        # System health status
+        self.system_health = {
+            'cpu_status': 'Normal',
+            'memory_status': 'Normal',
+            'disk_status': 'Normal',
+            'network_status': 'Normal',
+            'security_status': 'Normal'
+        }
+        
+        # Add notification system
+        self.notification_queue = []
+        self.last_notification_time = time.time()
+        
         # Security settings
         self.security_config = {
             'max_cpu_percent': 80,
@@ -217,8 +230,11 @@ class SecurityLogger:
         self.main_frame = ttk.Frame(root, style="Dark.TFrame")
         self.main_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
         
-        # Create header with gradient effect
+        # Create header with system health
         self.create_header()
+        
+        # Create system health indicator
+        self.create_health_indicator()
         
         # Create top control panel
         self.create_control_panel()
@@ -266,16 +282,32 @@ class SecurityLogger:
             self.log_event(f"Critical: Failed to load security policies: {str(e)}", 'CRITICAL')
 
     def update_file_hashes(self):
-        """Update file hashes for monitored directories"""
+        """Update file hashes for monitored directories with caching"""
+        current_time = time.time()
+        # Only update hashes every 5 minutes
+        if hasattr(self, '_last_hash_update') and (current_time - self._last_hash_update) < 300:
+            return
+            
+        self._last_hash_update = current_time
+        
         for directory in self.security_config['monitored_directories']:
             if os.path.exists(directory):
                 for root, _, files in os.walk(directory):
                     for file in files:
                         file_path = os.path.join(root, file)
                         try:
+                            # Skip files that haven't been modified
+                            if file_path in self.file_hashes:
+                                stat = os.stat(file_path)
+                                if stat.st_mtime <= self.file_hashes[file_path]['mtime']:
+                                    continue
+                            
                             with open(file_path, 'rb') as f:
                                 file_hash = hashlib.sha256(f.read()).hexdigest()
-                                self.file_hashes[file_path] = file_hash
+                                self.file_hashes[file_path] = {
+                                    'hash': file_hash,
+                                    'mtime': os.stat(file_path).st_mtime
+                                }
                         except Exception:
                             continue
 
@@ -290,7 +322,7 @@ class SecurityLogger:
                             with open(file_path, 'rb') as f:
                                 current_hash = hashlib.sha256(f.read()).hexdigest()
                                 if file_path in self.file_hashes:
-                                    if current_hash != self.file_hashes[file_path]:
+                                    if current_hash != self.file_hashes[file_path]['hash']:
                                         self.log_event(
                                             f"Critical: File modification detected: {file_path}",
                                             'CRITICAL'
@@ -358,26 +390,48 @@ class SecurityLogger:
             self.root.after(1000, self.monitor_system)
             return
             
-        current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        current_time = time.time()
         
+        # Update health status
+        self.update_health_status()
+        
+        # Throttle process monitoring to every 2 seconds
+        if not hasattr(self, '_last_process_update') or (current_time - self._last_process_update) >= 2:
+            self._last_process_update = current_time
+            try:
+                # Update top processes
+                self.update_top_processes()
+                
+                # Monitor processes for security
+                self.monitor_processes()
+            except Exception as e:
+                self.log_event(f"Critical: Error monitoring processes: {str(e)}", 'CRITICAL')
+        
+        # Throttle network monitoring to every 5 seconds
+        if not hasattr(self, '_last_network_update') or (current_time - self._last_network_update) >= 5:
+            self._last_network_update = current_time
+            try:
+                # Monitor network activity
+                self.monitor_network_activity()
+                # Update network connections display
+                self.update_network_connections()
+            except Exception as e:
+                self.log_event(f"Critical: Error monitoring network: {str(e)}", 'CRITICAL')
+        
+        # Throttle file integrity checks to every 30 seconds
+        if not hasattr(self, '_last_file_check') or (current_time - self._last_file_check) >= 30:
+            self._last_file_check = current_time
+            try:
+                # Check file integrity
+                self.check_file_integrity()
+            except Exception as e:
+                self.log_event(f"Critical: Error checking file integrity: {str(e)}", 'CRITICAL')
+        
+        # Update statistics every second
         try:
-            # Update top processes
-            self.update_top_processes()
-            
-            # Monitor processes for security
-            self.monitor_processes()
-            
-            # Monitor network activity
-            self.monitor_network_activity()
-            
-            # Check file integrity
-            self.check_file_integrity()
-            
-            # Update statistics
             self.update_statistics()
-            
         except Exception as e:
-            self.log_event(f"Critical: Error monitoring system: {str(e)}", 'CRITICAL')
+            self.log_event(f"Critical: Error updating statistics: {str(e)}", 'CRITICAL')
         
         # Schedule next update
         self.root.after(1000, self.monitor_system)
@@ -474,6 +528,122 @@ class SecurityLogger:
                           font=('Arial', 20, 'bold'), style="Dark.TLabel")
         header.pack(pady=10)
 
+    def create_health_indicator(self):
+        """Create a system health indicator panel"""
+        health_frame = ttk.Frame(self.main_frame, style="Dark.TFrame")
+        health_frame.pack(fill=tk.X, pady=5)
+        
+        # Health status indicators
+        self.health_labels = {}
+        
+        # CPU Health
+        cpu_frame = ttk.Frame(health_frame, style="Dark.TFrame")
+        cpu_frame.pack(side=tk.LEFT, padx=10)
+        ttk.Label(cpu_frame, text="CPU:", style="Dark.TLabel").pack(side=tk.LEFT)
+        self.health_labels['cpu'] = ttk.Label(cpu_frame, text="Normal", style="Dark.TLabel")
+        self.health_labels['cpu'].pack(side=tk.LEFT, padx=5)
+        
+        # Memory Health
+        mem_frame = ttk.Frame(health_frame, style="Dark.TFrame")
+        mem_frame.pack(side=tk.LEFT, padx=10)
+        ttk.Label(mem_frame, text="Memory:", style="Dark.TLabel").pack(side=tk.LEFT)
+        self.health_labels['memory'] = ttk.Label(mem_frame, text="Normal", style="Dark.TLabel")
+        self.health_labels['memory'].pack(side=tk.LEFT, padx=5)
+        
+        # Disk Health
+        disk_frame = ttk.Frame(health_frame, style="Dark.TFrame")
+        disk_frame.pack(side=tk.LEFT, padx=10)
+        ttk.Label(disk_frame, text="Disk:", style="Dark.TLabel").pack(side=tk.LEFT)
+        self.health_labels['disk'] = ttk.Label(disk_frame, text="Normal", style="Dark.TLabel")
+        self.health_labels['disk'].pack(side=tk.LEFT, padx=5)
+        
+        # Network Health
+        net_frame = ttk.Frame(health_frame, style="Dark.TFrame")
+        net_frame.pack(side=tk.LEFT, padx=10)
+        ttk.Label(net_frame, text="Network:", style="Dark.TLabel").pack(side=tk.LEFT)
+        self.health_labels['network'] = ttk.Label(net_frame, text="Normal", style="Dark.TLabel")
+        self.health_labels['network'].pack(side=tk.LEFT, padx=5)
+        
+        # Security Status
+        sec_frame = ttk.Frame(health_frame, style="Dark.TFrame")
+        sec_frame.pack(side=tk.LEFT, padx=10)
+        ttk.Label(sec_frame, text="Security:", style="Dark.TLabel").pack(side=tk.LEFT)
+        self.health_labels['security'] = ttk.Label(sec_frame, text="Normal", style="Dark.TLabel")
+        self.health_labels['security'].pack(side=tk.LEFT, padx=5)
+
+    def update_health_status(self):
+        """Update system health status"""
+        try:
+            # CPU Health
+            cpu_percent = psutil.cpu_percent()
+            if cpu_percent > 90:
+                self.system_health['cpu_status'] = 'Critical'
+                self.show_notification("Critical CPU Usage", f"CPU usage is at {cpu_percent}%")
+            elif cpu_percent > 70:
+                self.system_health['cpu_status'] = 'Warning'
+            else:
+                self.system_health['cpu_status'] = 'Normal'
+            
+            # Memory Health
+            memory = psutil.virtual_memory()
+            if memory.percent > 90:
+                self.system_health['memory_status'] = 'Critical'
+                self.show_notification("Critical Memory Usage", f"Memory usage is at {memory.percent}%")
+            elif memory.percent > 70:
+                self.system_health['memory_status'] = 'Warning'
+            else:
+                self.system_health['memory_status'] = 'Normal'
+            
+            # Disk Health
+            disk = psutil.disk_usage('/')
+            if disk.percent > 90:
+                self.system_health['disk_status'] = 'Critical'
+                self.show_notification("Critical Disk Usage", f"Disk usage is at {disk.percent}%")
+            elif disk.percent > 70:
+                self.system_health['disk_status'] = 'Warning'
+            else:
+                self.system_health['disk_status'] = 'Normal'
+            
+            # Update health labels
+            for component, status in self.system_health.items():
+                label = self.health_labels.get(component.split('_')[0])
+                if label:
+                    label.configure(
+                        text=status,
+                        foreground=self.get_status_color(status)
+                    )
+        
+        except Exception as e:
+            self.log_event(f"Error updating health status: {str(e)}", 'CRITICAL')
+
+    def get_status_color(self, status):
+        """Get color for status indicator"""
+        return {
+            'Normal': '#4CAF50',    # Green
+            'Warning': '#FFA500',   # Orange
+            'Critical': '#FF0000'   # Red
+        }.get(status, self.colors['fg'])
+
+    def show_notification(self, title, message):
+        """Show system notification"""
+        current_time = time.time()
+        # Limit notifications to once every 30 seconds
+        if current_time - self.last_notification_time >= 30:
+            self.last_notification_time = current_time
+            self.notification_queue.append((title, message))
+            self.log_event(f"Notification: {title} - {message}", 'WARNING')
+            
+            # Show desktop notification if available
+            try:
+                if sys.platform == 'darwin':  # macOS
+                    os.system(f"""
+                        osascript -e 'display notification "{message}" with title "{title}"'
+                    """)
+                elif sys.platform == 'linux':  # Linux
+                    os.system(f'notify-send "{title}" "{message}"')
+            except Exception:
+                pass
+
     def create_main_content(self):
         # Main paned window (horizontal split)
         main_paned = ttk.PanedWindow(self.main_frame, orient=tk.HORIZONTAL)
@@ -485,6 +655,9 @@ class SecurityLogger:
         
         # Top processes panel
         self.create_top_processes_panel(left_paned)
+        
+        # Network connections panel
+        self.create_network_panel(left_paned)
         
         # Log panel
         self.create_log_panel(left_paned)
@@ -544,6 +717,33 @@ class SecurityLogger:
         scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
         self.process_tree.configure(yscrollcommand=scrollbar.set)
 
+    def create_network_panel(self, parent):
+        """Create network connections monitoring panel"""
+        net_frame = ttk.Frame(parent, style="Dark.TFrame")
+        parent.add(net_frame, weight=1)
+        
+        # Header
+        header_frame = ttk.Frame(net_frame, style="Dark.TFrame")
+        header_frame.pack(fill=tk.X, pady=5)
+        
+        ttk.Label(header_frame, text="Network Connections", 
+                 font=('Arial', 12, 'bold'), style="Dark.TLabel").pack(side=tk.LEFT, padx=5)
+        
+        # Network connections tree
+        columns = ('Local Address', 'Local Port', 'Remote Address', 'Remote Port', 'Status', 'Process')
+        self.network_tree = ttk.Treeview(net_frame, columns=columns, show='headings', height=6)
+        
+        for col in columns:
+            self.network_tree.heading(col, text=col)
+            self.network_tree.column(col, width=100)
+        
+        self.network_tree.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+        
+        # Scrollbar
+        scrollbar = ttk.Scrollbar(net_frame, orient=tk.VERTICAL, command=self.network_tree.yview)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        self.network_tree.configure(yscrollcommand=scrollbar.set)
+
     def create_log_panel(self, parent):
         log_frame = ttk.Frame(parent, style="Dark.TFrame")
         parent.add(log_frame, weight=2)
@@ -583,30 +783,45 @@ class SecurityLogger:
         return "Other"
 
     def update_top_processes(self):
+        """Update the list of top processes with optimized memory usage"""
         # Clear current items
         for item in self.process_tree.get_children():
             self.process_tree.delete(item)
         
-        # Get top processes by CPU usage
+        # Get top processes by CPU usage with memory optimization
         processes = []
-        for proc in psutil.process_iter(['pid', 'name', 'cpu_percent', 'memory_percent', 'status']):
-            try:
-                info = proc.info
-                category = self.get_process_category(info['name'])
-                
-                if self.category_var.get() != "All" and category.lower() != self.category_var.get().lower():
+        try:
+            # Use a more efficient way to get process info
+            for proc in psutil.process_iter(['pid', 'name', 'cpu_percent', 'memory_percent', 'status']):
+                try:
+                    info = proc.info
+                    # Skip processes with no CPU usage
+                    if not info['cpu_percent']:
+                        continue
+                        
+                    category = self.get_process_category(info['name'])
+                    
+                    if self.category_var.get() != "All" and category.lower() != self.category_var.get().lower():
+                        continue
+                    
+                    processes.append({
+                        'name': info['name'],
+                        'pid': info['pid'],
+                        'cpu': info['cpu_percent'],
+                        'memory': info['memory_percent'],
+                        'category': category,
+                        'status': info['status']
+                    })
+                    
+                    # Limit the number of processes we track
+                    if len(processes) >= 50:
+                        break
+                        
+                except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
                     continue
-                
-                processes.append({
-                    'name': info['name'],
-                    'pid': info['pid'],
-                    'cpu': info['cpu_percent'] or 0,
-                    'memory': info['memory_percent'] or 0,
-                    'category': category,
-                    'status': info['status']
-                })
-            except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
-                continue
+        except Exception as e:
+            self.log_event(f"Error updating processes: {str(e)}", 'WARNING')
+            return
         
         # Sort by CPU usage and take top 15
         processes.sort(key=lambda x: x['cpu'], reverse=True)
@@ -873,6 +1088,53 @@ class SecurityLogger:
 
     def on_process_double_click(self, event):
         self.show_process_control()
+
+    def update_network_connections(self):
+        """Update network connections display"""
+        try:
+            # Clear current items
+            for item in self.network_tree.get_children():
+                self.network_tree.delete(item)
+            
+            # Get network connections
+            connections = psutil.net_connections(kind='inet')
+            suspicious_ports = set(self.suspicious_patterns['network_ports'])
+            
+            for conn in connections:
+                try:
+                    if conn.status == 'ESTABLISHED':
+                        # Get process name
+                        try:
+                            process = psutil.Process(conn.pid) if conn.pid else None
+                            process_name = process.name() if process else 'Unknown'
+                        except (psutil.NoSuchProcess, psutil.AccessDenied):
+                            process_name = 'Unknown'
+                        
+                        # Check for suspicious ports
+                        local_port = conn.laddr.port
+                        remote_port = conn.raddr.port if conn.raddr else 0
+                        
+                        if local_port in suspicious_ports or remote_port in suspicious_ports:
+                            self.log_event(
+                                f"Warning: Suspicious network connection detected - "
+                                f"Process: {process_name}, Port: {local_port if local_port in suspicious_ports else remote_port}",
+                                'WARNING'
+                            )
+                        
+                        # Add to tree
+                        self.network_tree.insert('', tk.END, values=(
+                            conn.laddr.ip,
+                            conn.laddr.port,
+                            conn.raddr.ip if conn.raddr else 'N/A',
+                            conn.raddr.port if conn.raddr else 'N/A',
+                            conn.status,
+                            process_name
+                        ))
+                except Exception:
+                    continue
+            
+        except Exception as e:
+            self.log_event(f"Error updating network connections: {str(e)}", 'WARNING')
 
 if __name__ == '__main__':
     root = tk.Tk()

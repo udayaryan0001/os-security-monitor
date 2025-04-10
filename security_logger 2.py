@@ -78,7 +78,7 @@ class SecurityLogger(QMainWindow):
         palette.setColor(QPalette.ColorRole.AlternateBase, QColor(53, 53, 53))
         palette.setColor(QPalette.ColorRole.ToolTipBase, Qt.GlobalColor.white)
         palette.setColor(QPalette.ColorRole.ToolTipText, Qt.GlobalColor.white)
-        palette.setColor(QPalette.ColorRole.Text, Qt.GlobalColor.white)
+        palette.setColor(QPalextte.ColorRole.Text, Qt.GlobalColor.white)
         palette.setColor(QPalette.ColorRole.Button, QColor(53, 53, 53))
         palette.setColor(QPalette.ColorRole.ButtonText, Qt.GlobalColor.white)
         palette.setColor(QPalette.ColorRole.BrightText, Qt.GlobalColor.red)
